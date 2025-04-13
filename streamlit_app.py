@@ -22,37 +22,50 @@ SCOPES = [
 def connect_to_gsheet():
     """Carga las credenciales desde los secretos de Streamlit y conecta con gspread."""
     try:
-        # Recupera el secreto. Streamlit lo parsea desde secrets.toml a un dict-like (AttrDict)
-        creds_info = st.secrets["GOOGLE_CREDENTIALS_JSON"]
+        # Recupera el secreto. La depuración indica que es un <class 'str'>
+        creds_json_str = st.secrets["GOOGLE_CREDENTIALS_JSON"]
 
-        # --- ¡CAMBIO CLAVE! ---
-        # NO uses json.loads(). Pasa el objeto creds_info directamente.
-        # from_service_account_info espera un diccionario con la info,
-        # y el AttrDict que Streamlit crea funciona perfectamente aquí.
-        creds = Credentials.from_service_account_info(creds_info, scopes=SCOPES)
+        # --- ¡CAMBIO CLAVE (Volver a como estaba)! ---
+        # Como st.secrets nos da un string, NECESITAMOS parsearlo a un diccionario
+        try:
+            creds_dict = json.loads(creds_json_str)
+        except json.JSONDecodeError as json_err:
+             # Error si el string NO es JSON válido
+             st.error(f"Error Crítico: No se pudo decodificar el JSON recuperado de los secretos.")
+             st.error(f"Detalle: {json_err}")
+             st.error("Revisa CUIDADOSAMENTE la sintaxis del valor de GOOGLE_CREDENTIALS_JSON en tu archivo secrets.toml.")
+             st.error("Asegúrate de que empieza con '{' y termina con '}' y que todo el contenido entre las ''' es JSON válido.")
+             # Muestra parte del string problemático para ayudar a depurar
+             st.text_area("Inicio del string JSON problemático:", creds_json_str[:500] + "...", height=150)
+             return None # Detiene la ejecución aquí
+
+        # Ahora SÍ podemos pasar el diccionario a from_service_account_info
+        creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
 
         gc = gspread.authorize(creds)
         return gc
 
     except KeyError:
-        # Este error ocurrirá si las claves no están definidas en los secretos
-        st.error("Error: Asegúrate de haber configurado 'GOOGLE_CREDENTIALS_JSON' y 'GOOGLE_SHEET_NAME' correctamente en tus secretos (secrets.toml o interfaz de Streamlit Cloud).")
+        # Si las claves no están en secrets.toml
+        st.error("Error: Asegúrate de haber configurado 'GOOGLE_CREDENTIALS_JSON' y 'GOOGLE_SHEET_NAME' correctamente en tu archivo .streamlit/secrets.toml.")
         return None
     except Exception as e:
-        # Captura otros errores, como problemas con el contenido de las credenciales
-        st.error(f"Error al conectar con Google API usando las credenciales: {e}")
-        # Información útil para depurar:
+        # Otros errores (p.ej., credenciales inválidas después de parsear, problemas de red)
+        st.error(f"Error al conectar con Google API (posiblemente después de parsear JSON): {e}")
+        # Repetir el tipo para confirmar si cambió algo (no debería)
         creds_secret_value = st.secrets.get("GOOGLE_CREDENTIALS_JSON")
-        st.error(f"Tipo de objeto recuperado de st.secrets['GOOGLE_CREDENTIALS_JSON']: {type(creds_secret_value)}")
-        if creds_secret_value:
-             st.error("Verifica que el contenido de 'GOOGLE_CREDENTIALS_JSON' en tus secretos sea el JSON completo y correcto descargado de Google Cloud.")
+        st.error(f"Tipo de objeto recuperado de st.secrets: {type(creds_secret_value)}")
         return None
+
 
 # Función para obtener la hoja de cálculo
 def get_worksheet(gc):
     """Obtiene la hoja de cálculo específica por nombre."""
     try:
         sheet_name = st.secrets["GOOGLE_SHEET_NAME"]
+
+        st.info(f"DEBUG: Intentando abrir hoja con nombre leído del secreto: '{sheet_name}'")
+
         spreadsheet = gc.open(sheet_name)
         # Asume que los datos están en la primera hoja
         worksheet = spreadsheet.sheet1
